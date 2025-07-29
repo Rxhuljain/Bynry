@@ -1,91 +1,139 @@
 #Code Review & Debugging
 
-from flask import Blueprint, request, jsonify
+
+# 1. Identify Issues (Technical & Business Logic)
+Syntax / Formatting Issues
+
+
+
+
+@app.route('/api/products' , methods=['POST']): inconsistent whitespace.
+
+Function name: def create _product(): has an illegal space.
+
+Misplaced/malformed line breaks in warehouse _id, product _id, etc.
+
+Key access like data['warehouse _id'] is broken across lines with invalid identifiers.
+
+Line: data['initial _quantity'] is malformed.
+
+
+2. Business Logic / Functional Issues
+SKU Uniqueness Not Enforced: No check for existing SKU in DB.
+
+No Error Handling: DB operations can fail; lack of try/except makes the endpoint brittle.
+
+Decimal Price Handling: No conversion or validation — could lead to float inaccuracies.
+
+Multiple Warehouses Logic Ignored: Only supports one warehouse per product (against business rules).
+
+Nullable/Optional Fields Not Handled: Code assumes all fields exist; fails on missing fields.
+
+Missing Content-Type Check: Does not validate that request content is JSON.
+
+Possible Race Condition: Adding product then fetching product.id may be prone to race issues under load if transactions aren't atomic.
+
+
+3. Impact in Production
+- Malformed syntax
+Issue: The code includes badly formatted lines (e.g., def create _product():, broken variable names).
+
+Impact: These syntax issues might not raise errors during basic testing but will cause unexpected failures or incorrect behavior when run. It also makes the code unreadable and hard to maintain.
+
+- No SKU uniqueness check
+Issue: The endpoint doesn’t check whether the sku (Stock Keeping Unit) already exists in the database.
+
+Impact: Since SKUs are meant to be unique product identifiers, duplicate SKUs could lead to misidentification, inventory mismanagement, or reporting errors. For example, two completely different products might appear to be the same.
+
+- Missing validations
+Issue: The code assumes that fields like name, sku, price, etc., are always present in the request body.
+
+Impact: If any of these are missing, Python will raise a KeyError, causing a 500 Internal Server Error instead of a user-friendly 400 Bad Request. This can frustrate clients and expose internal logic.
+
+- Decimal price mismanagement
+Issue: Price is taken as-is, likely as a floating-point number (float).
+
+Impact: Floats can introduce precision errors in monetary values (e.g., $9.999999 instead of $10.00). This is dangerous in ecommerce systems and could result in incorrect billing or calculations.
+
+- One-warehouse assumption
+Issue: The code links a product to only one warehouse and one inventory record.
+
+Impact: This ignores the business rule that a product can exist in multiple warehouses, limiting inventory management and distribution tracking capabilities.
+
+- No try/except blocks
+Issue: The database operations (add, commit) are done without exception handling.
+
+Impact: If anything fails (e.g., DB down, constraint violation), the server crashes or returns a generic 500 error, making it hard to debug and harming user trust.
+
+- No JSON content check
+Issue: The endpoint doesn’t check whether the incoming request is in JSON format.
+
+Impact: If a client sends form data or text instead of JSON, the request.json call will raise an error. This is avoidable by checking request.is_json.
+
+- Race condition on product ID
+Issue: The code accesses product.id immediately after add, before the record is fully committed.
+
+Impact: In high-concurrency environments (e.g., many users submitting products at once), this may cause the product.id to be invalid or missing. Using db.session.flush() ensures that product.id is available safely before the final commit().
+
+
+4. Improved Code
+from flask import request, jsonify
 from sqlalchemy.exc import IntegrityError
-from app.models.product import Product
-from app.models.inventory import Inventory
-from app.utils.database import db
-import logging
+from decimal import Decimal
 
-products_bp = Blueprint('products', __name__)
-
-@products_bp.route('/api/products', methods=['POST'])
+@app.route('/api/products', methods=['POST'])
 def create_product():
+
+    if not request.is_json:
+        return jsonify({"error": "Invalid content type. JSON expected."}), 400
+
+    data = request.get_json()
+
+
+    name = data.get('name')
+    sku = data.get('sku')
+    price = data.get('price')
+    warehouse_id = data.get('warehouse_id')
+    initial_quantity = data.get('initial_quantity', 0)
+
+
+    if not all([name, sku, price, warehouse_id]):
+        return jsonify({"error": "Missing required fields."}), 400
+
     try:
 
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-        
-        required_fields = ['name', 'sku', 'price', 'warehouse_id']
-        missing_fields = [field for field in required_fields if field not in data]
-        if missing_fields:
-            return jsonify({
-                "error": "Missing required fields",
-                "missing_fields": missing_fields
-            }), 400
-        
+        price = Decimal(str(price))
 
-        try:
-            price = float(data['price'])
-            warehouse_id = int(data['warehouse_id'])
-            initial_quantity = int(data.get('initial_quantity', 0))
-        except (ValueError, TypeError):
-            return jsonify({"error": "Invalid data types"}), 400
-        
-        if price < 0:
-            return jsonify({"error": "Price cannot be negative"}), 400
-        
 
-        existing_product = Product.query.filter_by(sku=data['sku']).first()
-        if existing_product:
-            return jsonify({"error": "SKU already exists"}), 409
-        
+        existing = Product.query.filter_by(sku=sku).first()
+        if existing:
+            return jsonify({"error": "SKU already exists."}), 409
 
-        db.session.begin()
-        
 
         product = Product(
-            name=data['name'].strip(),
-            sku=data['sku'].strip().upper(),
-            price=price,
-            description=data.get('description', ''),
-            category=data.get('category', ''),
-            supplier_id=data.get('supplier_id')
+            name=name,
+            sku=sku,
+            price=price
         )
-        
         db.session.add(product)
-        db.session.flush() 
+        db.session.flush()  
 
-        if initial_quantity > 0:
-            inventory = Inventory(
-                product_id=product.id,
-                warehouse_id=warehouse_id,
-                quantity=initial_quantity,
-                reserved_quantity=0
-            )
-            db.session.add(inventory)
-        
+        inventory = Inventory(
+            product_id=product.id,
+            warehouse_id=warehouse_id,
+            quantity=initial_quantity
+        )
+        db.session.add(inventory)
         db.session.commit()
-        
-        logging.info(f"Product created: {product.id} - {product.sku}")
-        
+
         return jsonify({
-            "message": "Product created successfully",
-            "product": {
-                "id": product.id,
-                "name": product.name,
-                "sku": product.sku,
-                "price": float(product.price)
-            }
+            "message": "Product created",
+            "product_id": product.id
         }), 201
-        
+
     except IntegrityError as e:
         db.session.rollback()
-        logging.error(f"Database integrity error: {str(e)}")
-        return jsonify({"error": "Database constraint violation"}), 409
-        
+        return jsonify({"error": "Database integrity error.", "details": str(e)}), 500
     except Exception as e:
         db.session.rollback()
-        logging.error(f"Unexpected error creating product: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "Unexpected error.", "details": str(e)}), 500
