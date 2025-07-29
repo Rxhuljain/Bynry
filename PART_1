@@ -1,17 +1,91 @@
 #Code Review & Debugging
 
-mkdir stockflow-case-study
-cd stockflow-case-study
+from flask import Blueprint, request, jsonify
+from sqlalchemy.exc import IntegrityError
+from app.models.product import Product
+from app.models.inventory import Inventory
+from app.utils.database import db
+import logging
 
+products_bp = Blueprint('products', __name__)
 
-mkdir -p {app/{models,routes,utils},database,tests,docs}
-touch {app/__init__.py,app/models/__init__.py,app/routes/__init__.py,app/utils/__init__.py}
-touch {requirements.txt,config.py,run.py,README.md,.env,.gitignore}
+@products_bp.route('/api/products', methods=['POST'])
+def create_product():
+    try:
 
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        required_fields = ['name', 'sku', 'price', 'warehouse_id']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({
+                "error": "Missing required fields",
+                "missing_fields": missing_fields
+            }), 400
+        
 
-touch app/models/{product.py,inventory.py,warehouse.py,company.py,supplier.py}
-touch app/routes/{products.py,alerts.py}
-touch app/utils/{database.py,helpers.py}
-touch database/{schema.sql,seed_data.sql}
-touch tests/{test_products.py,test_alerts.py}
-touch docs/{case_study_responses.md,assumptions.md}
+        try:
+            price = float(data['price'])
+            warehouse_id = int(data['warehouse_id'])
+            initial_quantity = int(data.get('initial_quantity', 0))
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid data types"}), 400
+        
+        if price < 0:
+            return jsonify({"error": "Price cannot be negative"}), 400
+        
+
+        existing_product = Product.query.filter_by(sku=data['sku']).first()
+        if existing_product:
+            return jsonify({"error": "SKU already exists"}), 409
+        
+
+        db.session.begin()
+        
+
+        product = Product(
+            name=data['name'].strip(),
+            sku=data['sku'].strip().upper(),
+            price=price,
+            description=data.get('description', ''),
+            category=data.get('category', ''),
+            supplier_id=data.get('supplier_id')
+        )
+        
+        db.session.add(product)
+        db.session.flush() 
+
+        if initial_quantity > 0:
+            inventory = Inventory(
+                product_id=product.id,
+                warehouse_id=warehouse_id,
+                quantity=initial_quantity,
+                reserved_quantity=0
+            )
+            db.session.add(inventory)
+        
+        db.session.commit()
+        
+        logging.info(f"Product created: {product.id} - {product.sku}")
+        
+        return jsonify({
+            "message": "Product created successfully",
+            "product": {
+                "id": product.id,
+                "name": product.name,
+                "sku": product.sku,
+                "price": float(product.price)
+            }
+        }), 201
+        
+    except IntegrityError as e:
+        db.session.rollback()
+        logging.error(f"Database integrity error: {str(e)}")
+        return jsonify({"error": "Database constraint violation"}), 409
+        
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Unexpected error creating product: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
