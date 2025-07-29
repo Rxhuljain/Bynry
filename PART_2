@@ -1,0 +1,105 @@
+1. Schema Design (SQL-style DDL)
+
+
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE
+);
+
+
+CREATE TABLE warehouses (
+    id SERIAL PRIMARY KEY,
+    company_id INT NOT NULL,
+    name VARCHAR(255),
+    location TEXT,
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+
+
+CREATE TABLE products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    sku VARCHAR(100) NOT NULL UNIQUE,
+    price DECIMAL(10, 2) NOT NULL,
+    is_bundle BOOLEAN DEFAULT FALSE
+);
+
+
+CREATE TABLE inventory (
+    product_id INT NOT NULL,
+    warehouse_id INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (product_id, warehouse_id),
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+);
+
+CREATE TABLE inventory_changes (
+    id SERIAL PRIMARY KEY,
+    product_id INT NOT NULL,
+    warehouse_id INT NOT NULL,
+    change INT NOT NULL, -- positive or negative
+    reason TEXT,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+);
+
+
+CREATE TABLE suppliers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    contact_info TEXT
+);
+
+
+CREATE TABLE supplier_products (
+    supplier_id INT NOT NULL,
+    product_id INT NOT NULL,
+    PRIMARY KEY (supplier_id, product_id),
+    FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+    FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+
+CREATE TABLE product_bundles (
+    bundle_id INT NOT NULL,     -- Parent (bundle)
+    product_id INT NOT NULL,    -- Child (component)
+    quantity INT NOT NULL DEFAULT 1,
+    PRIMARY KEY (bundle_id, product_id),
+    FOREIGN KEY (bundle_id) REFERENCES products(id),
+    FOREIGN KEY (product_id) REFERENCES products(id),
+    CHECK (bundle_id != product_id)
+);
+
+
+
+
+2. Questions for the Product Team (Identify Gaps)
+How are bundled products stored in inventory?
+
+Is inventory tracked for the bundle, components, or both?
+
+Do suppliers belong to a company or are they global?
+
+Can multiple companies share suppliers?
+
+Can bundles include other bundles (nesting)?
+
+If yes, must consider recursion.
+
+
+
+3.Design Justifications
+✅ Indexes & Constraints
+Unique constraints: sku is globally unique to prevent duplicates.
+
+Composite PKs: Used in inventory, supplier_products, and product_bundles to ensure uniqueness of relationships.
+
+Foreign keys: Enforce data integrity across related tables.
+
+Check constraints: Prevent bundles from containing themselves directly.
+
+✅ Audit Trail for Inventory
+inventory_changes allows tracking of inventory history (who/when/how much).
+
