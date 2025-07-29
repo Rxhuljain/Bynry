@@ -1,0 +1,17 @@
+#Code Review & Debugging
+
+mkdir stockflow-case-study
+cd stockflow-case-study
+
+
+mkdir -p {app/{models,routes,utils},database,tests,docs}
+touch {app/__init__.py,app/models/__init__.py,app/routes/__init__.py,app/utils/__init__.py}
+touch {requirements.txt,config.py,run.py,README.md,.env,.gitignore}
+
+
+touch app/models/{product.py,inventory.py,warehouse.py,company.py,supplier.py}
+touch app/routes/{products.py,alerts.py}
+touch app/utils/{database.py,helpers.py}
+touch database/{schema.sql,seed_data.sql}
+touch tests/{test_products.py,test_alerts.py}
+touch docs/{case_study_responses.md,assumptions.md}
